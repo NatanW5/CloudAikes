@@ -37,7 +37,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: python-app
-          path: /dataset_1_uk_housing/deploy/backend
+          path: dataset_1_uk_housing/deploy/backend/
 
       # 🚫 Opting Out of Oryx Build
       # If you prefer to disable the Oryx build process during deployment, follow these steps:
@@ -73,3 +73,4 @@ jobs:
           slot-name: 'Production'
 
           
+
