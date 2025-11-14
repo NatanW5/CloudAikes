@@ -10,7 +10,7 @@ app = Flask(__name__)
 # Make sure 'your_model.pkl' is in the same directory as this script
 try:
     # I'm using your updated path
-    model = joblib.load(r'dataset_1_uk_housing\models\uk_housing_rf_pipeline.pkl') 
+    model = joblib.load(r'models\uk_housing_rf_pipeline.pkl') 
     print("✅ Model loaded successfully!")
 except FileNotFoundError:
     print(r"❌ Model file not found. Make sure 'models\uk_housing_rf_pipeline.pkl' is in the correct path.")
