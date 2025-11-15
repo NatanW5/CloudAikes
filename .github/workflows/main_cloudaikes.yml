@@ -1,0 +1,54 @@
+name: Build and deploy Python app to Azure Web App - CloudAikes
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # required for actions/checkout
+
+    steps:
+      # 1️⃣ Checkout repo
+      - uses: actions/checkout@v4
+
+      # 2️⃣ Upload alleen de backend map als artifact
+      - name: Upload backend artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-app
+          path: dataset_1_uk_housing/deploy/backend/
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      # 3️⃣ Download artifact van build job
+      - name: Download backend artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: python-app
+
+      # 4️⃣ Login naar Azure
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_AA51CCA0DA3C4A7684AB0D2F977DE8AE }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_285A0985B1C14E4A972BD96DDEFAED2A }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_491B2A165BEC41358291509ABC5BCD0D }}
+
+      # 5️⃣ Deploy naar Azure App Service
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: 'CloudAikes'
+          slot-name: 'Production'
+          package: .
