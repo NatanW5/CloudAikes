@@ -3,9 +3,13 @@ import joblib
 from flask import Flask, request, jsonify, render_template
 import numpy as np
 import pandas as pd
+from flask_cors import CORS
+
 
 # 1. Initialize the Flask app
 app = Flask(__name__)
+CORS(app)
+
 
 # 2. Model Loading Logic
 MODEL_PATH = 'models/uk_housing_rf_pipeline.pkl'
@@ -92,7 +96,7 @@ def predict():
         prediction = model.predict(input_df)
         output = round(prediction[0], 2)
 
-        return render_template('index.html', prediction_text=f'Voorspelde prijs: £{output:,.2f}')
+        return jsonify({"prediction": f"Voorspelde prijs: £{output:,.2f}"})
 
     except Exception as e:
         # Dit vangt fouten op die tijdens de predictie zelf optreden (bijv. door foutieve model input)
