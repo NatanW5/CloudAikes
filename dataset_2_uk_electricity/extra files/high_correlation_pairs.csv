@@ -1,0 +1,9 @@
+feature_1,feature_2,correlation
+settlement_period,hour,0.9993484941658911
+nd,england_wales_demand,0.9988927334145712
+month,week,0.9718084044517531
+month,quarter,0.9711621927910545
+embedded_wind_capacity,year,0.9701313187080601
+embedded_wind_capacity,embedded_solar_capacity,0.9589662828561534
+quarter,week,0.9472079409986448
+embedded_solar_capacity,year,0.9356080721723924
