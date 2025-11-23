@@ -1,34 +1,32 @@
 import os
 import pickle
-import numpy as np
+import traceback # Nodig om de volledige fout te zien
 import pandas as pd
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 from datetime import datetime
 
-# 1. Initialize the Flask app
+# 1. Initialize Flask
 app = Flask(__name__)
-CORS(app)
+CORS(app) # Staat requests van andere domeinen toe (belangrijk voor frontend)
 
-# 2. Model Loading Logic
-# Zorg dat dit bestand in de map 'models' staat
-MODEL_PATH = 'models/uk_housing_price_catboost.pkl' 
+# 2. Model Loading
+MODEL_PATH = 'models/uk_housing_price_catboost.pkl'
 model = None
 
 def load_model():
     global model
     if not os.path.exists(MODEL_PATH):
-        print(f"❌ FOUT: Modelbestand niet gevonden op pad: {MODEL_PATH}")
+        print(f"❌ CRITISH: Modelbestand niet gevonden op: {MODEL_PATH}")
         return None
-
     try:
-        # CatBoost modellen uit de notebook zijn opgeslagen met pickle
         with open(MODEL_PATH, "rb") as f:
             model = pickle.load(f)
-        print(f"✅ CatBoost Model geladen: '{MODEL_PATH}' succesvol!")
+        print(f"✅ Model geladen: {MODEL_PATH}")
         return model
     except Exception as e:
-        print(f"❌ FOUT: Kon het model niet laden. Detail: {e}")
+        print(f"❌ CRITISH: Fout bij laden model: {e}")
+        traceback.print_exc()
         return None
 
 model = load_model()
@@ -39,47 +37,48 @@ def home():
 
 @app.route('/predict', methods=['POST'])
 def predict():
+    # Debugging: Print wat er binnenkomt
+    print("📩 Ontvangen request form data:", request.form)
+
+    # 1. Check of model er is
     if model is None:
-        return render_template('index.html', prediction_text='Serverfout: Model is niet geladen.')
+        return jsonify({
+            "error": "Model niet geladen op de server.",
+            "detail": "Controleer of het .pkl bestand bestaat in de map 'models'."
+        }), 500
 
     try:
         data = request.form
 
-        # --- STAP 1: Validatie en Data ophalen ---
+        # 2. Validatie & Conversie
         try:
             year = int(data.get("year"))
             month = int(data.get("month"))
         except (ValueError, TypeError):
-             return render_template('index.html', prediction_text='Invoerfout: Jaar en maand moeten getallen zijn.')
+            return jsonify({"error": "Validatiefout", "detail": "Jaar en maand moeten getallen zijn."}), 400
 
-        # --- STAP 2: Feature Engineering (zoals in je notebook) ---
-        
-        # 2a. Bereken date_numeric (Unix timestamp)
-        # We nemen de 1e dag van de maand als schatting
+        # 3. Feature Engineering
         try:
             dt_obj = datetime(year, month, 1)
             date_numeric = int(dt_obj.timestamp())
         except ValueError:
-            return render_template('index.html', prediction_text='Invoerfout: Ongeldige datum.')
+             return jsonify({"error": "Datumfout", "detail": f"Ongeldige datum: {year}-{month}"}), 400
 
-        # 2b. Inputs verzamelen
-        # CatBoost verwacht categorische features als strings (geen One-Hot Encoding nodig!)
-        # Let op: De namen van de keys (bijv "town") moeten overeenkomen met de 'name' attributen in je HTML form.
-        
+        # 4. Data voorbereiden
+        # LET OP: Zorg dat deze keys exact overeenkomen met je HTML form names
         input_data = {
-            "district": data.get("district", ""),        # Nieuw veld nodig in HTML
-            "town": data.get("town_city", ""),           # Map 'town_city' uit HTML naar 'town' voor model
-            "county": data.get("county", ""),
+            "district": data.get("district", "").strip(),
+            "town": data.get("town_city", "").strip(),
+            "county": data.get("county", "").strip(),
             "month": month,
             "year": year,
-            "property_type": data.get("property_type"),  # Bijv: "Detached", "Terraced"
-            "tenure": data.get("tenure", "Freehold"),    # Nieuw veld nodig (Freehold/Leasehold)
-            "new_build_flag": data.get("new_build_flag", "N"), # Nieuw veld nodig (Y/N)
+            "property_type": data.get("property_type"),
+            "tenure": data.get("tenure"),
+            "new_build_flag": data.get("new_build_flag"),
             "date_numeric": date_numeric
         }
-
-        # --- STAP 3: DataFrame maken ---
-        # De volgorde van kolommen moet exact kloppen met de training
+        
+        # 5. DataFrame maken
         expected_columns = [
             "district", "town", "county", "month", "year", 
             "property_type", "tenure", "new_build_flag", "date_numeric"
@@ -87,18 +86,34 @@ def predict():
         
         input_df = pd.DataFrame([input_data])
         
-        # Zorg voor de juiste kolomvolgorde
+        # Controleer op ontbrekende kolommen
+        missing_cols = [col for col in expected_columns if col not in input_df.columns]
+        if missing_cols:
+             return jsonify({"error": "Datafout", "detail": f"Ontbrekende kolommen: {missing_cols}"}), 400
+
+        # Zorg voor juiste volgorde
         input_df = input_df[expected_columns]
 
-        # --- STAP 4: Voorspellen ---
+        print("📊 Data naar model:", input_df.to_dict(orient='records'))
+
+        # 6. Voorspellen
         prediction = model.predict(input_df)
         output = round(prediction[0], 2)
 
-        return jsonify({"prediction": f"Voorspelde prijs: £{output:,.2f}"})
+        return jsonify({
+            "prediction": f"£{output:,.2f}",
+            "status": "success"
+        })
 
     except Exception as e:
-        print(f"❌ FOUT tijdens predictie: {e}")
-        return render_template('index.html', prediction_text=f'Interne fout: {str(e)}')
+        # Vang ALLES op en stuur het terug naar de frontend
+        tb = traceback.format_exc()
+        print("❌ SERVER ERROR:", tb) # Print in Azure logs
+        return jsonify({
+            "error": "Interne Server Fout",
+            "detail": str(e),
+            "traceback": tb
+        }), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5001, debug=True)
