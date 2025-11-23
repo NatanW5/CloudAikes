@@ -1,7 +1,7 @@
 flask
 flask-cors
-numpy
 pandas
+numpy
 scikit-learn
-catboost
+xgboost
 gunicorn

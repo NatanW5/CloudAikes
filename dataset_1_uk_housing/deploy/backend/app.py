@@ -1,35 +1,68 @@
 import os
 import pickle
-import traceback # Nodig om de volledige fout te zien
+import traceback
 import pandas as pd
+import xgboost as xgb
+import numpy as np
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
-from datetime import datetime
 
 # 1. Initialize Flask
 app = Flask(__name__)
-CORS(app) # Staat requests van andere domeinen toe (belangrijk voor frontend)
+CORS(app)
 
-# 2. Model Loading
-MODEL_PATH = 'models/uk_housing_price_catboost.pkl'
+# 2. Configuratie & Paden
+# Gebruik paden relatief aan deze file (de `deploy` map). Hierdoor werkt
+# de app ook wanneer je vanuit een andere werkmap start.
+DEPLOY_DIR = os.path.abspath(os.path.dirname(__file__))
+# Model en mappings bevinden zich in `deploy/models/`
+MODEL_PATH = os.path.join(DEPLOY_DIR, 'models', 'xgboost_housing_v1.json')
+MAPPING_PATH = os.path.join(DEPLOY_DIR, 'models', 'encoding_mappings.pkl')
+
 model = None
+mappings = None
 
-def load_model():
-    global model
-    if not os.path.exists(MODEL_PATH):
-        print(f"❌ CRITISH: Modelbestand niet gevonden op: {MODEL_PATH}")
-        return None
-    try:
-        with open(MODEL_PATH, "rb") as f:
-            model = pickle.load(f)
-        print(f"✅ Model geladen: {MODEL_PATH}")
-        return model
-    except Exception as e:
-        print(f"❌ CRITISH: Fout bij laden model: {e}")
-        traceback.print_exc()
-        return None
+def load_resources():
+    global model, mappings
+    
+    # A. Model laden (XGBoost specifiek)
+    if os.path.exists(MODEL_PATH):
+        try:
+            model = xgb.XGBRegressor()
+            model.load_model(MODEL_PATH)
+            print(f"✅ XGBoost model geladen: {MODEL_PATH}")
+        except Exception as e:
+            print(f"❌ Fout bij laden XGBoost model: {e}")
+            traceback.print_exc()
+    else:
+        print(f"❌ CRITISCH: Modelbestand niet gevonden op: {MODEL_PATH}")
 
-model = load_model()
+    # B. Mappings laden (Pickle)
+    if os.path.exists(MAPPING_PATH):
+        try:
+            with open(MAPPING_PATH, "rb") as f:
+                mappings = pickle.load(f)
+            print(f"✅ Encoding mappings geladen.")
+        except Exception as e:
+            print(f"❌ Fout bij laden mappings: {e}")
+    else:
+        print(f"❌ CRITISCH: Mapping bestand niet gevonden op: {MAPPING_PATH}")
+
+# Direct laden bij opstarten
+load_resources()
+
+# Hardcoded mappings voor categorieën (gebaseerd op alfabetische volgorde van Notebook 03)
+# Als notebook 03 cat.codes heeft gebruikt, is het meestal alfabetisch.
+# D=0, F=1, O=2, S=3, T=4
+PROPERTY_TYPE_MAP = {'D': 0, 'F': 1, 'O': 2, 'S': 3, 'T': 4}
+# N=0, Y=1
+OLD_NEW_MAP = {'N': 0, 'Y': 1}
+# F=0, L=1, U=2 (Unknown)
+DURATION_MAP = {'F': 0, 'L': 1, 'U': 2}
+# A=0, B=1 (Standaard / Additional)
+PPD_MAP = {'A': 0, 'B': 1}
+# A=0 (Add) - We nemen aan dat nieuwe voorspellingen 'Additions' zijn
+RECORD_STATUS_MAP = {'A': 0} 
 
 @app.route('/')
 def home():
@@ -37,83 +70,107 @@ def home():
 
 @app.route('/predict', methods=['POST'])
 def predict():
-    # Debugging: Print wat er binnenkomt
-    print("📩 Ontvangen request form data:", request.form)
-
-    # 1. Check of model er is
-    if model is None:
-        return jsonify({
-            "error": "Model niet geladen op de server.",
-            "detail": "Controleer of het .pkl bestand bestaat in de map 'models'."
-        }), 500
+    if model is None or mappings is None:
+        return jsonify({"error": "Model of mappings niet geladen op server."}), 500
 
     try:
         data = request.form
+        print("📩 Request:", data)
 
-        # 2. Validatie & Conversie
+        # 1. Inputs Ophalen
         try:
             year = int(data.get("year"))
             month = int(data.get("month"))
-        except (ValueError, TypeError):
-            return jsonify({"error": "Validatiefout", "detail": "Jaar en maand moeten getallen zijn."}), 400
+            prop_type = data.get("property_type") # D, S, T, F, O
+            old_new = data.get("old_new")         # Y, N
+            duration = data.get("duration")       # F, L
+            county = data.get("county").strip()
+            district = data.get("district").strip()
+        except (ValueError, TypeError) as e:
+            return jsonify({"error": "Validatiefout", "detail": str(e)}), 400
 
-        # 3. Feature Engineering
-        try:
-            dt_obj = datetime(year, month, 1)
-            date_numeric = int(dt_obj.timestamp())
-        except ValueError:
-             return jsonify({"error": "Datumfout", "detail": f"Ongeldige datum: {year}-{month}"}), 400
+        # 2. Feature Engineering & Encoding
+        
+        # A. Categorieën omzetten naar nummers
+        pt_code = PROPERTY_TYPE_MAP.get(prop_type, 4) # Default to T if unknown
+        on_code = OLD_NEW_MAP.get(old_new, 0)
+        dur_code = DURATION_MAP.get(duration, 0)
+        ppd_code = 0 # Default Standard
+        rec_code = 0 # Default Addition
 
-        # 4. Data voorbereiden
-        # LET OP: Zorg dat deze keys exact overeenkomen met je HTML form names
+        # B. Target Encoding voor Locatie (Cruciaal!)
+        # We kijken in de geladen mappings. Als de county niet bestaat, pakken we het globale gemiddelde.
+        
+        # Ophalen van de series uit de pickle
+        county_means = mappings.get('county_means') if isinstance(mappings, dict) else None
+        district_means = mappings.get('district_means') if isinstance(mappings, dict) else None
+        global_mean = 250000 # Fallback als alles faalt (ongeveer gemiddelde UK prijs)
+
+        # Helper: veilig mean ophalen ongeacht of mapping een dict of Series is
+        def _get_encoded(mapping, key, fallback=global_mean):
+            if mapping is None:
+                return fallback
+            # Pandas Series / dict-like
+            try:
+                # Series/Index/Mapping with .get and .mean
+                if hasattr(mapping, 'get') and hasattr(mapping, 'mean'):
+                    return mapping.get(key, mapping.mean())
+                # Plain dict: bereken mean van values
+                if isinstance(mapping, dict):
+                    vals = list(mapping.values())
+                    if len(vals) > 0:
+                        return mapping.get(key, float(np.mean(vals)))
+                    return fallback
+            except Exception:
+                pass
+            return fallback
+
+        county_encoded = _get_encoded(county_means, county)
+        district_encoded = _get_encoded(district_means, district)
+
+        # 3. DataFrame samenstellen
+        # De volgorde MOET exact hetzelfde zijn als X_train in Notebook 03
+        # Features: ['property_type', 'old_new', 'duration', 'ppd_category', 'record_status', 
+        #            'year', 'month', 'county_encoded', 'district_encoded']
+        
         input_data = {
-            "district": data.get("district", "").strip(),
-            "town": data.get("town_city", "").strip(),
-            "county": data.get("county", "").strip(),
-            "month": month,
-            "year": year,
-            "property_type": data.get("property_type"),
-            "tenure": data.get("tenure"),
-            "new_build_flag": data.get("new_build_flag"),
-            "date_numeric": date_numeric
+            'property_type': [pt_code],
+            'old_new': [on_code],
+            'duration': [dur_code],
+            'ppd_category': [ppd_code],
+            'record_status': [rec_code],
+            'year': [year],
+            'month': [month],
+            'county_encoded': [county_encoded],
+            'district_encoded': [district_encoded]
         }
         
-        # 5. DataFrame maken
-        expected_columns = [
-            "district", "town", "county", "month", "year", 
-            "property_type", "tenure", "new_build_flag", "date_numeric"
-        ]
+        input_df = pd.DataFrame(input_data)
         
-        input_df = pd.DataFrame([input_data])
-        
-        # Controleer op ontbrekende kolommen
-        missing_cols = [col for col in expected_columns if col not in input_df.columns]
-        if missing_cols:
-             return jsonify({"error": "Datafout", "detail": f"Ontbrekende kolommen: {missing_cols}"}), 400
+        # Zeker zijn van kolomvolgorde
+        cols_order = ['property_type', 'old_new', 'duration', 'ppd_category', 'record_status', 
+                      'year', 'month', 'county_encoded', 'district_encoded']
+        input_df = input_df[cols_order]
 
-        # Zorg voor juiste volgorde
-        input_df = input_df[expected_columns]
+        print("📊 Data naar XGBoost:", input_df.values)
 
-        print("📊 Data naar model:", input_df.to_dict(orient='records'))
-
-        # 6. Voorspellen
+        # 4. Predictie
         prediction = model.predict(input_df)
-        output = round(prediction[0], 2)
+        price = float(prediction[0])
+        
+        # Geen negatieve huizenprijzen
+        price = max(price, 0)
 
         return jsonify({
-            "prediction": f"£{output:,.2f}",
+            "prediction": f"£{price:,.2f}",
+            "details": f"Locatie factor: {district} (£{district_encoded:,.0f} avg)",
             "status": "success"
         })
 
     except Exception as e:
-        # Vang ALLES op en stuur het terug naar de frontend
         tb = traceback.format_exc()
-        print("❌ SERVER ERROR:", tb) # Print in Azure logs
-        return jsonify({
-            "error": "Interne Server Fout",
-            "detail": str(e),
-            "traceback": tb
-        }), 500
+        print("❌ SERVER ERROR:", tb)
+        return jsonify({"error": "Interne Fout", "detail": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5001, debug=True)
