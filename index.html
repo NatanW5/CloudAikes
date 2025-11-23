@@ -1,111 +1,188 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="nl">
 <head>
-<meta charset="UTF-8">
-<title>UK Housing Price Predictor</title>
-<style>
-    body {
-        font-family: Arial, sans-serif;
-        background-color: #f8f9fa;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        height: 100vh;
-    }
-    form {
-        background: white;
-        padding: 25px 40px;
-        border-radius: 12px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        width: 350px;
-    }
-    input, select {
-        width: 100%;
-        padding: 8px;
-        margin: 8px 0;
-        border-radius: 6px;
-        border: 1px solid #ccc;
-    }
-    button {
-        background-color: #007bff;
-        color: white;
-        padding: 10px 20px;
-        border: none;
-        border-radius: 6px;
-        cursor: pointer;
-        width: 100%;
-    }
-    button:hover {
-        background-color: #0056b3;
-    }
-    .result {
-        margin-top: 15px;
-        font-weight: bold;
-        text-align: center;
-        color: #333;
-        min-height: 24px;
-    }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UK Housing Price Predictor (CatBoost)</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f4f9;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+        .container {
+            background-color: #ffffff;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            width: 100%;
+            max-width: 500px;
+        }
+        h2 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #555;
+        }
+        input, select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            box-sizing: border-box; /* Zorgt dat padding binnen de width valt */
+        }
+        button {
+            width: 100%;
+            padding: 12px;
+            background-color: #28a745;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            margin-top: 10px;
+        }
+        button:hover {
+            background-color: #218838;
+        }
+        .result {
+            margin-top: 20px;
+            text-align: center;
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #007bff;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .error {
+            color: #dc3545;
+        }
+        .section-title {
+            margin-top: 20px;
+            margin-bottom: 10px;
+            font-size: 0.9em;
+            text-transform: uppercase;
+            color: #888;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 5px;
+        }
+    </style>
 </head>
 <body>
-<form id="predict-form">
-    <h2>UK Housing Price Predictor</h2>
 
-    <label>Year:</label>
-    <input type="number" name="year" value="2023" required>
+    <div class="container">
+        <h2>🏠 UK Huizenprijs Predictor</h2>
+        <form id="predictionForm">
+            
+            <div class="section-title">Wanneer?</div>
+            <div class="form-group">
+                <label for="year">Jaar (1995-2025)</label>
+                <input type="number" id="year" name="year" min="1995" max="2025" value="2024" required>
+            </div>
+            <div class="form-group">
+                <label for="month">Maand (1-12)</label>
+                <input type="number" id="month" name="month" min="1" max="12" value="1" required>
+            </div>
 
-    <label>Month:</label>
-    <input type="number" name="month" value="5" required>
+            <div class="section-title">Locatie</div>
+            <div class="form-group">
+                <label for="town_city">Stad (Town/City)</label>
+                <input type="text" id="town_city" name="town_city" placeholder="Bijv. London" required>
+            </div>
+            <div class="form-group">
+                <label for="district">District (Nieuw)</label>
+                <input type="text" id="district" name="district" placeholder="Bijv. CITY OF LONDON" required>
+            </div>
+            <div class="form-group">
+                <label for="county">County</label>
+                <input type="text" id="county" name="county" placeholder="Bijv. GREATER LONDON" required>
+            </div>
 
-    <label>Town/City:</label>
-    <input type="text" name="town_city" value="London" required>
+            <div class="section-title">Details Woning</div>
+            <div class="form-group">
+                <label for="property_type">Woningtype</label>
+                <select id="property_type" name="property_type" required>
+                    <option value="Detached">Detached (Vrijstaand)</option>
+                    <option value="Semi-Detached">Semi-Detached (Halfopen)</option>
+                    <option value="Terraced">Terraced (Rijhuis)</option>
+                    <option value="Flats/Maisonettes">Flats/Maisonettes (Appartement)</option>
+                    <option value="Other">Other (Anders)</option>
+                </select>
+            </div>
 
-    <label>County:</label>
-    <input type="text" name="county" value="Greater London" required>
+            <div class="form-group">
+                <label for="tenure">Eigendomsvorm (Tenure)</label>
+                <select id="tenure" name="tenure" required>
+                    <option value="Freehold">Freehold (Volle eigendom)</option>
+                    <option value="Leasehold">Leasehold (Erfpacht)</option>
+                </select>
+            </div>
 
-    <label>Property Type:</label>
-    <select name="property_type">
-        <option>Detached</option>
-        <option>Flats/Maisonettes</option>
-        <option>Other</option>
-        <option>Semi-Detached</option>
-        <option>Terraced</option>
-    </select>
+            <div class="form-group">
+                <label for="new_build_flag">Nieuwbouw?</label>
+                <select id="new_build_flag" name="new_build_flag" required>
+                    <option value="N">Nee (Bestaande bouw)</option>
+                    <option value="Y">Ja (Nieuwbouw)</option>
+                </select>
+            </div>
 
-    <button type="submit">Predict</button>
+            <button type="submit" id="predictBtn">Bereken Prijs</button>
+        </form>
 
-    <div class="result" id="result"></div>
-</form>
+        <div id="resultText" class="result"></div>
+    </div>
 
-<script>
-const form = document.getElementById('predict-form');
-const resultDiv = document.getElementById('result');
+    <script>
+        document.getElementById('predictionForm').addEventListener('submit', function(e) {
+            e.preventDefault(); // Voorkomt dat de pagina herlaadt
+            
+            const resultDiv = document.getElementById('resultText');
+            const btn = document.getElementById('predictBtn');
+            
+            // UI feedback geven dat we bezig zijn
+            resultDiv.textContent = "⏳ Bezig met berekenen...";
+            resultDiv.className = "result";
+            btn.disabled = true;
 
-form.addEventListener('submit', async (e) => {
-    e.preventDefault();
+            const formData = new FormData(this);
 
-    const formData = new FormData(form);
-    const data = new URLSearchParams(formData);
-
-    try {
-        const response = await fetch('https://cloudaikes-fzgxdpcyd2a5akgm.germanywestcentral-01.azurewebsites.net/predict', {
-            method: 'POST',
-            body: data
+            fetch('https://cloudaikes-fzgxdpcyd2a5akgm.germanywestcentral-01.azurewebsites.net/predict', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.prediction) {
+                    resultDiv.textContent = "💰 " + data.prediction;
+                    resultDiv.classList.remove('error');
+                } else {
+                    // Fallback als er een foutmelding in HTML format terugkomt (zeldzaam bij jsonify)
+                    resultDiv.textContent = "Er is iets misgegaan.";
+                    resultDiv.classList.add('error');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                resultDiv.textContent = "❌ Serverfout: Kan geen verbinding maken met de API.";
+                resultDiv.classList.add('error');
+            })
+            .finally(() => {
+                btn.disabled = false;
+            });
         });
-
-        // Azure backend stuurt HTML terug (index.html met prediction_text)
-        const text = await response.text();
-
-        // Haal alleen de voorspelling eruit
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(text, 'text/html');
-        const predictionDiv = doc.querySelector('.result');
-        resultDiv.innerHTML = predictionDiv ? predictionDiv.innerHTML : 'Voorspelling niet gevonden';
-
-    } catch (err) {
-        resultDiv.innerHTML = "Fout bij voorspelling: " + err;
-    }
-});
-</script>
+    </script>
 </body>
 </html>
